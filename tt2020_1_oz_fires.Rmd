@@ -1,0 +1,160 @@
+---
+title: "Australian Major Incident ~ NASA Fire Data"
+author: "Alyssa Goldberg"
+date: "1/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/Marketing/Desktop/tidy_tuesday/2020_1_oz_fires")
+```
+
+The [2020 week 2 #TidyTuesday] (https://github.com/rfordatascience/tidytuesday/tree/master/data/2020/2020-01-07) data concerned the ongoing fires in Australia. The fire data as reported by the New South Wales Rural Fire Service includes polygons and multi-polygon shapes as well as metadata about each fire. The NASA FIRMS data is point data and there are several caveats associated with this data as regards fire reporting - it takes brightness readings during the day and night and infers fire location and intensity from those readings. There has been widespread misuse and bad reporting based on this data so I wanted to filter it to correspond only with those fires that are known and mapped by the NSWRFS. 
+
+The NSWRFS data is continuously updated several times per day.  It includes metadata, including a description field which includes one of three statuses: Under control, Being controlled, Out of control.  I wanted to see if there was a correlation between the status and the average nighttime brightenss of each discrete fire.  
+
+#Load Libraries and Data  
+First up, we load the data and do some preliminary exploration.  We'll need to ensure that all of the geo data is in the same format so that we can join and plot it.  The raw data are in various formats, so that will take a bit of munging to get everything to play nicely together. I've done my best to include links to pages that I (googled) found helpful as I put this together but I may have missed one or two - if you see work that should be credited, please let me know and I'll be happy to correct it.  
+
+##libraries
+
+```{r libraries, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(sp)
+library(rgdal)
+library(rgeos)
+library(maps)
+library(sf)
+library(geojsonio)
+library(lwgeom)
+library(ggspatial)
+library(ggvoronoi)
+
+```
+
+##the data  
+
+nasa_fire
+```{r data, cache=TRUE}
+# Get the Data and transform it into sf objects
+rainfall <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-07/rainfall.csv')
+temperature <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-07/temperature.csv')
+
+
+# IF YOU USE THIS DATA PLEASE BE CAUTIOUS WITH INTERPRETATION
+# assist from http://datawanderings.com/2018/09/01/r-point-in-polygon-a-mathematical-cookie-cutter/
+nasa_fire <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-07/MODIS_C6_Australia_and_New_Zealand_7d.csv')
+
+
+
+ggplot(nasa_fire, aes(x=longitude, y = latitude))+
+  geom_density_2d()
+#Get the base map for Australia
+aus<-maps::map(regions="australia",resolution = 0) %>% 
+  st_as_sf(map_data(.))%>% 
+  st_transform_proj(., "+init=epsg:3857")
+
+#read in the NASA data, filter for  night time readings - this data makes assumptions about fires based on brightness - it is not reliable for accurately labeling fires
+
+tidy_nasa<-readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-07/MODIS_C6_Australia_and_New_Zealand_7d.csv') %>% 
+  filter(daynight == "N") %>% 
+  geojsonio::geojson_json(., longitude = "longitude", latitude = "latitude") %>% 
+  geojsonio::geojson_sf(.) %>% 
+  st_transform_proj(., "+init=epsg:3857")
+
+saveRDS(tidy_nasa, "nasa.RDS")
+
+
+# For JSON File of fires
+url <- "http://www.rfs.nsw.gov.au/feeds/majorIncidents.json"
+
+#read in the Australian fire data and transform it to match the NASA fire data - googled my fingers to the bone to find the proper way to align the crs/proj for both data sets
+##holy crap, this took forever to find!!https://r-spatial.github.io/sf/reference/st_transform.html
+##
+url <- "http://www.rfs.nsw.gov.au/feeds/majorIncidents.json"
+
+fires <- st_read(url)
+
+NASA_fires<-readOGR("MODIS_C6_Australia_and_New_Zealand_24h/MODIS_C6_Australia_and_New_Zealand_24h.shp", "MODIS_C6_Australia_and_New_Zealand_24h")
+
+fire_poly <- NASA_fires %>% 
+  st_as_sf(.) %>% 
+  filter(!st_is_empty(.)) %>% 
+  filter(st_is_valid(.)) %>% 
+  st_union(by_feature = TRUE) %>% 
+  st_transform_proj(., "+init=epsg:3857") 
+# %>% 
+#   filter(DAYNIGHT == "N", CONFIDENCE >= 95)
+
+aus_fires <- sf::st_read(url) %>% 
+  mutate(control = case_when(
+    str_detect(description, "Being controlled") ~ "Being Controlled",
+    str_detect(description, "Out of control") ~ "Out of Control",
+    str_detect(description, "Under control") ~ "Under Control"
+  )) %>% 
+  st_transform_proj(., "+init=epsg:3857") %>% 
+  st_make_valid(.) %>% 
+  st_buffer(., dist = 0)
+
+aus_fires_all<-sf::st_read(url) %>% 
+  mutate(control = case_when(
+    str_detect(description, "Being controlled") ~ "Being Controlled",
+    str_detect(description, "Out of control") ~ "Out of Control",
+    str_detect(description, "Under control") ~ "Under Control"
+  )) %>% 
+  st_transform_proj(., "+init=epsg:3857") %>% 
+  filter(st_is_valid(.)) 
+
+#Get the bounding box for the fires data so that we can zoom in
+bbox_df<-st_bbox(aus_fires)
+
+
+
+```
+
+
+```{r cars}
+#get the intersection of the NASA and Australian Major Incidents data - we're going to see how "bright" the fires are, based on an average within each shapefile
+#assist from https://mattherman.info/blog/point-in-poly/
+fires_with_brightness<-sf::st_intersection(aus_fires, tidy_nasa) %>% 
+  mutate(brightness = as.numeric(brightness))
+
+
+#calculate the average brightness for each of the polygons based on the title field
+avg_brightness<-fires_with_brightness %>% group_by(title) %>% 
+  summarise(brightness = mean(brightness))
+
+#join that data back to the australian fires
+aus_fires_bright<-aus_fires %>% st_join(avg_brightness) %>% 
+  filter(!is.na(brightness))
+
+#map assist adding bar
+#https://www.r-spatial.org/r/2018/10/25/ggplot2-sf.html
+
+aus_map<-ggplot()+
+  geom_sf(data=aus, fill = NA)+
+  geom_sf(data=aus_fires_bright, aes(fill=brightness), color=NA, alpha=0.5)+
+  theme_void()
+
+aus_map_cropped<-ggplot() +
+  geom_sf(data =aus)+
+  # geom_sf(data=tidy_nasa, color="yellow")+
+  geom_sf(data=aus_fires_bright,aes(fill=brightness), color="black")+
+  geom_sf(data = aus_fires_all, color="darkolivegreen", fill = NA)+
+  coord_sf(xlim = c(16415059, 17076021), ylim = c(-4553862, -3273892), expand = TRUE)+
+  scale_fill_gradient(low = "blue", high = "red")+
+  theme_void()+
+  annotation_scale(location = "bl", width_hint = 0.5) +
+  theme(legend.position = "bottom",
+        plot.background = element_rect(fill="turquoise"))+
+  facet_wrap(~control)
+
+ggplot(tidy_nasa)+geom_sf()
+```
+
+```{r}
+out_of_control<-aus_fires_all %>% filter(str_detect(description, "Out of control"))
+ggplot(out_of_control)+geom_sf()
+```
+
