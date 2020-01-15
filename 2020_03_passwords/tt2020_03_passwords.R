@@ -7,16 +7,21 @@ passwords <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/
   filter(!is.na(nchar(password)))#the next function kept throwing errors until I filtered out the NAs!!
 
 #break the passwords into pairs of characters - make sure you remove all NAs or this will cause you hours of pain
+# letter_bi<-passwords %>%
+#   mutate(pairs = map(password, ~nchar(.x)%%2)) %>%
+#   mutate(bi_chars = case_when(
+#     pairs == 0 ~map(password, ~substring(.x, seq(1, nchar(.x, type="c"), 2), seq(2, nchar(.x, type="c"), 2))),
+#     TRUE ~ map(password, ~substring(.x, seq(1, nchar(.x,type = "c")-1, 2), seq(2, nchar(.x, type = "c"), 2)))
+#   )) %>%
+#   group_by(password) %>%
+#   mutate(bi_chars = paste0(unlist(bi_chars), collapse =  " ")) %>%
+#   unnest_tokens("word", bi_chars) %>%
+#   ungroup()
+
+##thanks to twitter comment by https://twitter.com/ekholm_e for telling me about character_shingle!
+##https://github.com/ekholme/TidyTuesday/tree/master/2020%20-%203%20-%20passwords
 letter_bi<-passwords %>%
-  mutate(pairs = map(password, ~nchar(.x)%%2)) %>%
-  mutate(bi_chars = case_when(
-    pairs == 0 ~map(password, ~substring(.x, seq(1, nchar(.x, type="c"), 2), seq(2, nchar(.x, type="c"), 2))),
-    TRUE ~ map(password, ~substring(.x, seq(1, nchar(.x,type = "c")-1, 2), seq(2, nchar(.x, type = "c"), 2)))
-  )) %>%
-  group_by(password) %>%
-  mutate(bi_chars = paste0(unlist(bi_chars), collapse =  " ")) %>%
-  unnest_tokens("word", bi_chars) %>%
-  ungroup()
+  unnest_tokens("word", password, token = "character_shingles",n= 2)
 
 #calculate the tf_idf, get the top 10.  Some will return more than 10 items because of identical tf_idf scores.
 #arrange by category and tf_idf and add a row number
