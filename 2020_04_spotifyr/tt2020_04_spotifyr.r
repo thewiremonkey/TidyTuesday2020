@@ -37,8 +37,7 @@ my_recs<-get_recommendations(limit=100, market = "US", seed_artists = seeds$arti
 rec_features<-get_track_audio_features( my_recs$id_11) %>%
   left_join(my_recs %>% select(id_11, name_3, name_14), by=c("id" = "id_11"))
 
-pca<-prcomp(rec_features %>% select_if(is.numeric), scale=TRUE, center=TRUE)
-
 #assist for plotting pca https://cran.r-project.org/web/packages/ggfortify/vignettes/plot_pca.html
 #
-#
+pca<-prcomp(rec_features %>% select_if(is.numeric), scale=TRUE, center=TRUE)
+
