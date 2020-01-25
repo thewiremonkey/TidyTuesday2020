@@ -1,10 +1,18 @@
 library(spotifyr)
 library(lubridate)
 library(tidyverse)
+library(ggfortify)
 
 Sys.setenv(SPOTIFY_CLIENT_ID = 'e4ec23b2bada4263b05944323785c8ca')
 Sys.setenv(SPOTIFY_CLIENT_SECRET = '4dbb404760984bf2b98ff3c2ae1e6328')
 
+playlists<-data.frame(name = c('sleep',
+                               'floating through space',
+                               'birds in the forest'),
+                      playlist_id = c('37i9dQZF1DWZd79rJ6a7lp',
+                                      '37i9dQZF1DX1n9whBbBKoL',
+                                      '37i9dQZF1DWVEt8B7a1H1M')
+)
 seeds<-data.frame(name = c('Johnny Cash',
                            'David Bowie',
                            'Monks of the Abbey of Notre Dame',
@@ -41,3 +49,11 @@ rec_features<-get_track_audio_features( my_recs$id_11) %>%
 #
 pca<-prcomp(rec_features %>% select_if(is.numeric), scale=TRUE, center=TRUE)
 
+zzzz<-get_playlist_audio_features(username = 'spotify',
+                            playlist_uris = playlists$playlist_id) %>%
+  unnest_wider(track.artists) %>%
+  janitor::clean_names()
+
+zz_df<-zzzz %>% select_if(is.numeric) %>%
+  bind_cols(name=factor(zzzz$playlist_name) )
+pca_list<-prcomp(zz_df %>% select(-name))
