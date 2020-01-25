@@ -2,6 +2,7 @@ library(spotifyr)
 library(lubridate)
 library(tidyverse)
 library(ggfortify)
+library('caret')
 
 Sys.setenv(SPOTIFY_CLIENT_ID = 'e4ec23b2bada4263b05944323785c8ca')
 Sys.setenv(SPOTIFY_CLIENT_SECRET = '4dbb404760984bf2b98ff3c2ae1e6328')
@@ -55,5 +56,22 @@ zzzz<-get_playlist_audio_features(username = 'spotify',
   janitor::clean_names()
 
 zz_df<-zzzz %>% select_if(is.numeric) %>%
-  bind_cols(name=factor(zzzz$playlist_name) )
+  bind_cols(name=zzzz$playlist_name )
+
+zz_index<-createDataPartition(y = zz_df$name,times = 1,p = .8,list = FALSE)
+zz_train<-zz_df[zz_index,]
+zz_test<-zz_df[-zz_index,]
+zz_control<-trainControl(method="rf", number=10)
+
+
+
 pca_list<-prcomp(zz_df %>% select(-name))
+
+autoplot(pca_list$rotation)
+
+
+zz_rf<-train(name~., data=zz_train,method="rf")
+zz_pred<-predict(zz_rf,zz_test)
+zz_rf$confusion
+zz_rf$importance
+
