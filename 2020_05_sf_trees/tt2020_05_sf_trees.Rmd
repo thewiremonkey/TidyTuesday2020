@@ -1,0 +1,95 @@
+---
+title: "Tidy Tuesday 2020 Week 5 San Francisco Trees"
+author: "Alyssa Goldberg"
+date: "1/29/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r data}
+library(tidyverse)
+library(sp)
+library(rgdal)
+library(tidytext)
+library(rgeos)
+library(maps)
+library(sf)
+library(lwgeom)
+library(ggspatial)
+
+setwd("~/TidyTuesday2020/2020_05_sf_trees")
+# sf_trees <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-28/sf_trees.csv') %>% 
+#   filter(!is.na(latitude)) %>% 
+#   filter(longitude>-125) %>% 
+#   mutate(common = purrr::map(str_split(species, "::"),~tail(.x,1)) %>% unlist() ) %>% 
+#   filter(common !="")
+# 
+# sf_trees$common<-trimws(sf_trees$common)
+
+write_csv(sf_trees, "sf_trees.csv")
+
+sf_trees<-read_csv('sf_trees.csv')
+
+tree_spdf<-sf_trees 
+coordinates(tree_spdf)<-~longitude+latitude
+
+
+# trees<-raw_trees %>% 
+#   st_as_sf(.) %>% 
+#   filter(!st_is_empty(.)) %>% 
+#   filter(st_is_valid(.)) %>% 
+#   st_union(by_feature = TRUE) %>% 
+#   st_transform_proj(., "+init=epsg:3857") 
+
+
+
+sf_hoods<-rgdal::readOGR("Analysis Neighborhoods/geo_export_4ea8b2b1-ff8d-4d70-bb76-a57fad3ae6e4.shp", "geo_export_4ea8b2b1-ff8d-4d70-bb76-a57fad3ae6e4") 
+
+sf_proj<-proj4string(sf_hoods)
+proj4string(tree_spdf)<-sf_proj
+saveRDS(tree_spdf, "tree_spdf.rds")
+saveRDS(sf_trees, "sf_trees.rds")
+
+sf_tree_hoods_list<-over(x = tree_spdf,y=sf_hoods,returnList = TRUE)
+sf_tree_hoods<-over(x = tree_spdf, y=sf_hoods)
+
+san_fran<-sf_trees %>% bind_cols(sf_tree_hoods)
+
+tree_token<-san_fran %>% 
+  mutate(nhood = as.character(nhood)) %>% 
+  filter(!is.na(nhood)) %>% 
+  unnest_tokens(token="sentences", input = common, output="word")
+
+tree_count<-tree_token %>% select(nhood, word) %>% 
+  group_by(nhood, word) %>% 
+  summarise(spec_count=n())
+
+tfidf<-tidytext::bind_tf_idf(tree_count,word,nhood,spec_count) %>% 
+  group_by(nhood) %>% 
+  arrange(desc(tf_idf)) %>% 
+  top_n(1)
+
+p<-ggplot(tfidf)+
+  geom_col(aes(x=word, y=tf_idf))+
+  facet_wrap(~nhood, scales='free')+
+  coord_flip()
+  
+# %>% 
+#   st_as_sf(.) %>% 
+#   filter(!st_is_empty(.)) %>% 
+#   filter(st_is_valid(.)) %>% 
+#   st_union(by_feature = TRUE) %>% 
+#   st_transform_proj(., "+init=epsg:3857") 
+
+
+```
+
