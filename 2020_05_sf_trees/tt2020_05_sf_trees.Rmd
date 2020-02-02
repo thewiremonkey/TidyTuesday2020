@@ -71,6 +71,12 @@ tree_count<-tree_token %>% select(nhood, word) %>%
   group_by(nhood, word) %>% 
   summarise(spec_count=n())
 
+#find the most numerous tree in each neighborhood
+max_tree<-tree_count %>% 
+  ungroup() %>% 
+  group_by(nhood) %>% 
+  top_n(1, spec_count)
+
 tfidf<-tidytext::bind_tf_idf(tree_count,word,nhood,spec_count) %>% 
   group_by(nhood) %>% 
   arrange(desc(tf_idf)) %>% 
@@ -80,6 +86,9 @@ sf_hoods_df<-fortify(sf_hoods, region = "nhood") %>%
   left_join(tfidf, by=c("id" = "nhood")) %>% 
   filter(!is.na(word))
 
+sf_max_hoods_df<-fortify(sf_hoods, region = 'nhood') %>% 
+  left_join(max_tree, by=c('id'='nhood'))
+
 sf_hood_labels<-sf_hoods_df %>% 
   filter(!is.na(word) )%>% 
   select(id, long, lat) %>% 
@@ -88,6 +97,16 @@ sf_hood_labels<-sf_hoods_df %>%
             y = mean(lat, na.rm=TRUE)) %>% 
   left_join(sf_hoods_df %>% select(id, word) %>% distinct()) %>% 
   mutate(label = paste(id, word,sep = ":\n"))
+
+sf_max_hoods_label<-sf_max_hoods_df %>% 
+  filter(!is.na(word)) %>% 
+  select(id, long, lat) %>% 
+  group_by(id) %>% 
+  summarize(x=mean(long, na.rm=TRUE),
+            y=mean(lat, na.rm=TRUE)) %>% 
+  left_join(sf_max_hoods_df %>% select(id, word) %>% distinct()) %>% 
+  mutate(label = paste(id, word, sep = ":\n"))
+            
 
 mp<-ggplot(sf_hoods_df, aes(x=long, y=lat))+
   geom_polygon(aes(fill=word, group=group), color="darkgrey", show.legend = FALSE)+
@@ -103,6 +122,21 @@ png(filename = "mp.png", width = 1200,height = 800, units = "px")
 mp
 dev.off()
 
+mp_max<-ggplot(sf_max_hoods_df, aes(x=long, y=lat))+
+  geom_polygon(aes(fill=word, group=group), color="darkgrey", show.legend = FALSE)+
+  geom_text(data=sf_max_hoods_label, aes(x=x, y=y, label=label), size = 3,position = position_dodge())+
+  theme_void()+
+  theme(legend.position = "bottom",
+        plot.background = element_rect(fill="grey"))+
+  labs(title = "Most Distinct Trees by San Francisco Neighborhood",
+       subtitle = "TF-IDF for species by neighborhood",
+       caption = "data: data.sfgov.org\nviz: Alyssa Goldberg @wiremonkey\ntidytuesday 2020 week 5")
+
+png(filename = "mp_max.png", width = 1200,height = 800, units = "px")
+mp_max
+dev.off()
+
+
 # tfidf_sf_trees
 
 # sf_touch<-rgeos::gTouches(sf_hoods,byid = TRUE)
@@ -115,6 +149,6 @@ dev.off()
 #   st_union(by_feature = TRUE) %>% 
 #   st_transform_proj(., "+init=epsg:3857") 
 
-mp
+
 ```
 
