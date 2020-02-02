@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 ```
 
 ## R Markdown
@@ -21,10 +21,8 @@ library(sp)
 library(rgdal)
 library(tidytext)
 library(rgeos)
-library(maps)
 library(sf)
-library(lwgeom)
-library(ggspatial)
+library(ggrepel)
 
 setwd("~/TidyTuesday2020/2020_05_sf_trees")
 # sf_trees <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-28/sf_trees.csv') %>% 
@@ -35,7 +33,7 @@ setwd("~/TidyTuesday2020/2020_05_sf_trees")
 # 
 # sf_trees$common<-trimws(sf_trees$common)
 
-write_csv(sf_trees, "sf_trees.csv")
+# write_csv(sf_trees, "sf_trees.csv")
 
 sf_trees<-read_csv('sf_trees.csv')
 
@@ -76,13 +74,40 @@ tree_count<-tree_token %>% select(nhood, word) %>%
 tfidf<-tidytext::bind_tf_idf(tree_count,word,nhood,spec_count) %>% 
   group_by(nhood) %>% 
   arrange(desc(tf_idf)) %>% 
-  top_n(1)
+  top_n(1,tf_idf)
 
-p<-ggplot(tfidf)+
-  geom_col(aes(x=word, y=tf_idf))+
-  facet_wrap(~nhood, scales='free')+
-  coord_flip()
-  
+sf_hoods_df<-fortify(sf_hoods, region = "nhood") %>% 
+  left_join(tfidf, by=c("id" = "nhood")) %>% 
+  filter(!is.na(word))
+
+sf_hood_labels<-sf_hoods_df %>% 
+  filter(!is.na(word) )%>% 
+  select(id, long, lat) %>% 
+  group_by(id) %>% 
+  summarise(x=mean(long, na.rm=TRUE), 
+            y = mean(lat, na.rm=TRUE)) %>% 
+  left_join(sf_hoods_df %>% select(id, word) %>% distinct()) %>% 
+  mutate(label = paste(id, word,sep = ":\n"))
+
+mp<-ggplot(sf_hoods_df, aes(x=long, y=lat))+
+  geom_polygon(aes(fill=word, group=group), color="darkgrey", show.legend = FALSE)+
+  geom_text(data=sf_hood_labels, aes(x=x, y=y, label=label), size = 4,position = position_dodge())+
+  theme_void()+
+  theme(legend.position = "bottom",
+        plot.background = element_rect(fill="grey"))+
+  labs(title = "Most Distinct Trees by San Francisco Neighborhood",
+       subtitle = "TF-IDF for species by neighborhood",
+       caption = "data: data.sfgov.org\nviz: Alyssa Goldberg @wiremonkey\ntidytuesday 2020 week 5")
+
+png(filename = "mp.png", width = 1200,height = 800, units = "px")
+mp
+dev.off()
+
+# tfidf_sf_trees
+
+# sf_touch<-rgeos::gTouches(sf_hoods,byid = TRUE)
+# rownames(sf_touch)<- unique(sf_hoods$nhood)
+# colnames(sf_touch)<-unique(sf_hoods$nhood)
 # %>% 
 #   st_as_sf(.) %>% 
 #   filter(!st_is_empty(.)) %>% 
@@ -90,6 +115,6 @@ p<-ggplot(tfidf)+
 #   st_union(by_feature = TRUE) %>% 
 #   st_transform_proj(., "+init=epsg:3857") 
 
-
+mp
 ```
 
