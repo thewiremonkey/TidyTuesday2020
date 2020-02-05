@@ -6,25 +6,26 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## San Francisco Tree Data
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+TidyTuesday 2020 week 5 data: Tree count of San Francisco.
 
 ```{r data}
 library(tidyverse)
 library(sp)
 library(rgdal)
 library(tidytext)
-library(rgeos)
-library(sf)
-library(ggrepel)
+library(osmdata)
+
+#assist from Cederic Scherer for osmmap https://github.com/Z3tt/TidyTuesday/blob/master/R/2020_05_TreesSF.Rmd
+
 
 setwd("~/TidyTuesday2020/2020_05_sf_trees")
+#read in trees from github, filter out any that do not have location data and the outlier that is off to the west.  
+#extract the common name by mapping over the species column split on the double colon and pulling the trimmed tail. Save this to both RDS and .csv for offline work
 # sf_trees <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-01-28/sf_trees.csv') %>% 
 #   filter(!is.na(latitude)) %>% 
 #   filter(longitude>-125) %>% 
@@ -34,42 +35,58 @@ setwd("~/TidyTuesday2020/2020_05_sf_trees")
 # sf_trees$common<-trimws(sf_trees$common)
 
 # write_csv(sf_trees, "sf_trees.csv")
-
+#read in the processed local file
 sf_trees<-read_csv('sf_trees.csv')
 
+#create a spatial points data frame by declaring coordinates.  This allows us to use the over() argument to group points within the polygons provided by the San Francisco neighborhood shapefiles.
 tree_spdf<-sf_trees 
-coordinates(tree_spdf)<-~longitude+latitude
+sp::coordinates(tree_spdf)<-~longitude+latitude
 
-
-# trees<-raw_trees %>% 
-#   st_as_sf(.) %>% 
-#   filter(!st_is_empty(.)) %>% 
-#   filter(st_is_valid(.)) %>% 
-#   st_union(by_feature = TRUE) %>% 
-#   st_transform_proj(., "+init=epsg:3857") 
-
-
+#neighborhood data downloaded and extracted from 
+#https://data.sfgov.org/Geographic-Locations-and-Boundaries/Analysis-Neighborhoods/p5b7-5n3h
 
 sf_hoods<-rgdal::readOGR("Analysis Neighborhoods/geo_export_4ea8b2b1-ff8d-4d70-bb76-a57fad3ae6e4.shp", "geo_export_4ea8b2b1-ff8d-4d70-bb76-a57fad3ae6e4") 
+osm_bbox<-bbox(sf_hoods) #get the bounding box for the sf_hoods spatialpolygondataframe
+##cedscherer example
+sf_roads_raw <- 
+  opq(bbox = osm_bbox) %>%
+  add_osm_feature("highway") %>%
+  osmdata_sf()
 
-sf_proj<-proj4string(sf_hoods)
-proj4string(tree_spdf)<-sf_proj
-saveRDS(tree_spdf, "tree_spdf.rds")
-saveRDS(sf_trees, "sf_trees.rds")
+sf_roads <- 
+  sf_roads_raw$osm_lines %>% 
+  select(geometry) %>% 
+  fortify()
 
-sf_tree_hoods_list<-over(x = tree_spdf,y=sf_hoods,returnList = TRUE)
-sf_tree_hoods<-over(x = tree_spdf, y=sf_hoods)
 
-san_fran<-sf_trees %>% bind_cols(sf_tree_hoods)
+q <- opq(bbox = osm_bbox) %>%
+    add_osm_feature(key = 'street') 
 
-tree_token<-san_fran %>% 
+cway_sev <- osmdata_sp(q)
+sp::plot(cway_sev$osm_lines)
+#get the projection data used for the San Francisco shapefiles and save as an object so that we can set the spatial points data frame to the same projection.  We need to do this both for using the over() function and for geo-mapping in ggplot. Saving as RDS for offline use (because I'm working at an airport)
+sf_proj<-sp::proj4string(sf_hoods)
+sp::proj4string(tree_spdf)<-sf_proj
+# saveRDS(tree_spdf, "tree_spdf.rds")
+# saveRDS(sf_trees, "sf_trees.rds")
+
+#trying both list format and data frame format - ended up using data frame
+#sp::over checks each point in the SpatialPointsDataFrame to see which polygon it is in within the SpatialPolygonsDataFrame.  It returns a list of polygon ids based on the factor that the data uses - in this case, it was the 'nhood' column with 41 levels.  We end up removing Treasure Island as there are no trees from the SpatialPointsDataFrame located there.
+
+# sf_tree_hoods_list<-sp::over(x = tree_spdf,y=sf_hoods,returnList = TRUE)
+sf_tree_hoods<-sp::over(x = tree_spdf, y=sf_hoods)
+
+#We can then bind the results of sp::over to the original tree point data frame so that each row has a neighborhood associated with it.
+san_fran<-sf_trees %>% 
+  bind_cols(sf_tree_hoods) %>% 
   mutate(nhood = as.character(nhood)) %>% 
-  filter(!is.na(nhood)) %>% 
-  unnest_tokens(token="sentences", input = common, output="word")
+  filter(!is.na(nhood))
 
-tree_count<-tree_token %>% select(nhood, word) %>% 
-  group_by(nhood, word) %>% 
-  summarise(spec_count=n())
+#Now we can find out how many of each species is located in each neighborhood. I replicated the common name column as "word" for use in tidytext::tfidf but it probably wasn't necessary
+tree_count<-san_fran %>% 
+  group_by(nhood, common) %>% 
+  summarise(spec_count = n()) %>% 
+  mutate(word = common)
 
 #find the most numerous tree in each neighborhood
 max_tree<-tree_count %>% 
@@ -77,18 +94,35 @@ max_tree<-tree_count %>%
   group_by(nhood) %>% 
   top_n(1, spec_count)
 
+#some actual analysis - using term-frequency-inverse-document-frequency we can discover which species best characterize each neighborhood.
 tfidf<-tidytext::bind_tf_idf(tree_count,word,nhood,spec_count) %>% 
   group_by(nhood) %>% 
   arrange(desc(tf_idf)) %>% 
   top_n(1,tf_idf)
 
+#convert the San Francisco neighborhood polygons back to a data frame for use with ggplot. Join it to the tfidf data and remove any polygons that don't include a tree name (word)
+#this data frame includes the tfidf
 sf_hoods_df<-fortify(sf_hoods, region = "nhood") %>% 
   left_join(tfidf, by=c("id" = "nhood")) %>% 
   filter(!is.na(word))
 
+sf_roads_raw <- 
+  opq(bbox = sf_hoods@bbox) %>%
+  add_osm_feature("highway") %>%
+  osmdata_sf()
+
+
+
+#create a point data frame with each individual tree from the tfidf data
+tfidf_trees<-tfidf %>% 
+  left_join(san_fran, by=c("nhood", "common")) %>% 
+  distinct()
+
+#afterwards, I created a data frame with just the most numerous trees in each neighborhood as a comparison to the tfidf
 sf_max_hoods_df<-fortify(sf_hoods, region = 'nhood') %>% 
   left_join(max_tree, by=c('id'='nhood'))
 
+#create labels for each neighborhood.  Were this for something more substantial than tidytuesday, I would manually set the lat-long for each neighborhood label, but for casual purposes, using the mean of each dimension gives us a useable centroid.  The challenge here is figuring out a programmatic way of merging the tree name data so that it is not repeated especially in the northeast corner of the city.  More research for that.
 sf_hood_labels<-sf_hoods_df %>% 
   filter(!is.na(word) )%>% 
   select(id, long, lat) %>% 
@@ -98,6 +132,7 @@ sf_hood_labels<-sf_hoods_df %>%
   left_join(sf_hoods_df %>% select(id, word) %>% distinct()) %>% 
   mutate(label = paste(id, word,sep = ":\n"))
 
+#same as above, but for the maximum number of trees in each neighborhood
 sf_max_hoods_label<-sf_max_hoods_df %>% 
   filter(!is.na(word)) %>% 
   select(id, long, lat) %>% 
@@ -107,10 +142,12 @@ sf_max_hoods_label<-sf_max_hoods_df %>%
   left_join(sf_max_hoods_df %>% select(id, word) %>% distinct()) %>% 
   mutate(label = paste(id, word, sep = ":\n"))
             
-
-mp<-ggplot(sf_hoods_df, aes(x=long, y=lat))+
-  geom_polygon(aes(fill=word, group=group), color="darkgrey", show.legend = FALSE)+
-  geom_text(data=sf_hood_labels, aes(x=x, y=y, label=label), size = 4,position = position_dodge())+
+#create the plot for each of the data sets
+mp<-ggplot()+
+  geom_sf(data=sf_roads, aes(), size=0.5, alpha=0.7)+
+  geom_polygon(data=sf_hoods_df, aes(x=long, y=lat,fill=word, group=group), color="grey", show.legend = FALSE,alpha = 0.3)+
+  geom_text(data=sf_hood_labels, aes(x=x, y=y, label=label), size = 3)+
+  geom_point(data=tfidf_trees, aes(x=longitude, y=latitude))+
   theme_void()+
   theme(legend.position = "bottom",
         plot.background = element_rect(fill="grey"))+
