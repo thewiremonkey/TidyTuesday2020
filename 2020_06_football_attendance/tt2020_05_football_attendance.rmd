@@ -1,0 +1,24 @@
+---
+title: "Football Attendance"
+author: "Alyssa Goldberg"
+date: "2/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("./2020_06_football_attendance")
+```
+
+```{r libraries}
+library(tidyverse)
+```
+
+```{r load_data}
+
+# tuesdata <- tidytuesdayR::tt_load('2020-02-04') 
+# saveRDS(tuesdata, "tuesdata.rds")
+# rm(tuesdata)
+tuesdata<-readRDS("tuesdata.rds")
+```
+
