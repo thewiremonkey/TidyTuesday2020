@@ -1,0 +1,174 @@
+---
+title: "caribou 2020 week 26"
+author: "Alyssa Goldberg"
+date: "6/22/2020"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+# devtools::install_github("thebioengineer/tidytuesdayR")
+# devtools::install_github('thomasp85/gganimate')
+
+options(scipen = 9999.9)
+if (!grepl('2020_26', getwd()))
+  setwd('./2020_26_caribou')
+
+
+```
+```{r libraries}
+library(tidytuesdayR)
+library(tidyverse)
+library(sp)
+library(gganimate)
+```
+
+```{r fig.height=11, fig.width=11}
+raw <- tuesdata <- tidytuesdayR::tt_load('2020-06-23')
+ind <- raw$individuals
+
+#filter the location data to a representative 3 years
+#add year and month
+loc <- raw$locations %>%
+  mutate(datestamp = as.Date(timestamp),
+         year = lubridate::year(datestamp)) %>%
+  filter(year %in% c(2011, 2012, 2013)) %>%
+  left_join(ind %>% select(animal_id, sex))
+
+
+#find the top animals by number of observations
+top_bou <- loc %>% group_by(animal_id) %>%
+  count() %>%
+  arrange(desc(n)) %>%
+  ungroup() %>%
+  top_n(5, n)
+
+#filter the loc data for the top animals
+top_bou_pts <- loc %>% filter(animal_id %in% top_bou$animal_id) %>%
+  left_join(ind %>% select(animal_id, sex)) %>%
+  arrange(datestamp)
+
+#get a bounding box based on the lat and lon ranges in the data
+bc_box <-
+  ggmap::make_bbox(data = loc, lon = longitude, lat = latitude)
+
+#download map tiles - stamen watercolor is pretty
+bc_stamen <- ggmap::get_stamenmap(
+  maptype = 'watercolor',
+  bbox = bc_box,
+  # bbox = c(left = -124.1616,bottom = 54, right = -119.75, top = 56),
+  crop = TRUE,
+  zoom = 7
+)
+
+#plot it. stat_density2d creates the heatmap
+bou_map <- ggmap::ggmap(bc_stamen) +
+  stat_density2d(
+    aes(
+      x = longitude,
+      y = latitude,
+      # color=study_site,
+      alpha = stat(level)
+    ),
+    fill = "darkblue",
+    geom = "polygon",
+    bins = 20,
+    data = loc,
+    show.legend = FALSE
+  ) +
+  #Add in the line data for the top five beasts
+  geom_line(
+    data = subset(loc, animal_id %in% top_bou$animal_id),
+    aes(x = longitude, y = latitude, color = animal_id)
+  ) +
+  facet_grid(
+    rows = vars(year),
+    cols = vars(season),
+    shrink = TRUE,
+    switch = "y"
+  ) +
+  theme_void() +
+  theme(legend.position = "bottom") +
+  labs(
+    colour = "Animal ID",
+    title = "Range of Caribou in British Columbia",
+    subtitle = "including path data for top 5 'bou",
+    caption = "Seip DR, Price E (2019) Data from: Science update for the South Peace Northern Caribou\n(Rangifer tarandus caribou pop. 15) in British Columbia.\nMovebank Data Repository. https://doi.org/10.5441/001/1.p5bn656k\n
+       viz: @WireMonkey Alyssa Goldberg\n
+       TidyTuesday2020 week 26"
+  ) +
+  # scale_color_viridis_d()+
+  NULL
+
+ggsave("caribou_range.png",width = 11, height = 11)
+
+```
+```{r}
+bou_map
+```
+
+```{r}
+library(geosphere)
+
+#calculate distances
+#https://stackoverflow.com/questions/49532911/calculate-distance-longitude-latitude-of-multiple-in-dataframe-r
+
+#group and arrange the data by animal and timestamp. using lead (could also use lag) find the distance between the points with geosphere::distHaversine(), remove any null distances (indicates the start of a new animal id)
+bou_dist <- loc %>%
+  distinct() %>%
+  group_by(animal_id) %>%
+  arrange(animal_id, desc(timestamp)) %>%
+  mutate(mnth = lubridate::month(datestamp)) %>%
+  mutate(distance = distHaversine(cbind(longitude, latitude),
+                                  cbind(lead(longitude), lead(latitude)))) %>%
+  filter(!is.na(distance))
+
+```
+
+```{r}
+
+#Race 'em! For efficiency take a subset
+bou_race <- bou_dist %>%
+  filter(season == "Summer",
+         year == 2011,
+         mnth == 7) %>%
+  ungroup() %>%
+  group_by(animal_id) %>%
+  arrange(datestamp) %>%
+  mutate(tot_dist = cumsum(distance))
+
+#find the top animals by distance covered
+top_racers <- bou_race %>%
+  group_by(animal_id) %>%
+  filter(tot_dist == max(tot_dist)) %>%
+  ungroup() %>%
+  top_n(10, tot_dist)
+
+#filter the data to include only the top racers
+bou_race_df <-
+  bou_race %>%
+  filter(animal_id %in% top_racers$animal_id) %>%
+  select(animal_id, datestamp, tot_dist) %>%
+  ungroup() %>%
+  mutate(animal_id = fct_reorder(animal_id, .fun = sum, tot_dist))
+
+p <- bou_race_df %>%
+  ggplot(., aes(x = animal_id, y = tot_dist/1000, color = animal_id)) +
+  geom_line(show.legend = FALSE) +
+  geom_point(size = 3, show.legend = FALSE) +
+  labs(x="", y="distance km")+
+  coord_flip() +
+  transition_reveal(datestamp) +
+  shadow_mark(alpha = FALSE, size = 1)
+
+animate(p, fps = 25, duration = 20, width = 800, height = 600, end_pause = 100)
+anim_save("bou_race.gif")
+
+```
+
+```{r}
+p
+```
+
