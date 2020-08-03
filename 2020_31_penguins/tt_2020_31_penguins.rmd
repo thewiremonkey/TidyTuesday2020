@@ -1,0 +1,187 @@
+---
+title: "Penguins"
+author: "Alyssa Goldberg"
+date: "7/27/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidytuesdayR)
+library(caret)
+library(ggforce)
+```
+
+```{r}
+tt<-tidytuesdayR::tt_load(2020, 31)
+
+
+#create a new feature combining species and sex
+dataset <- tt$penguins %>% 
+  filter(!is.na(species)) %>% 
+  filter(complete.cases(.)) %>% 
+  mutate(species = as.factor(species)) %>% 
+  mutate(sp_sex = as.factor(paste(species, sex, sep = "_"))) %>% 
+  select(-island, -year, -sex, -species) %>% 
+  select(sp_sex, bill_length_mm, bill_depth_mm, flipper_length_mm, body_mass_g)
+
+
+validation_index <- createDataPartition(dataset$sp_sex, p=0.80, list=FALSE)
+# select 20% of the data for validation
+validation <- dataset[-validation_index, ]
+# use the remaining 80% of data to training and testing the models
+dataset <- dataset[validation_index,]
+```
+
+
+```{r}
+# https://machinelearningmastery.com/machine-learning-in-r-step-by-step/
+
+
+
+# Run algorithms using 10-fold cross validation
+control <- trainControl(method="cv", number=10)
+metric <- "Accuracy"
+set.seed(7)
+fit.lda <- train(sp_sex~., data=dataset, method="lda", metric=metric, trControl=control)
+
+
+# b) nonlinear algorithms
+# CART
+set.seed(7)
+fit.cart <- train(sp_sex~., data=dataset, method="rpart", metric=metric, trControl=control)
+# kNN
+set.seed(7)
+fit.knn <- train(sp_sex~., data=dataset, method="knn", metric=metric, trControl=control)
+# c) advanced algorithms
+# SVM
+set.seed(7)
+fit.svm <- train(sp_sex~., data=dataset, method="svmRadial", metric=metric, trControl=control)
+# Random Forest
+set.seed(7)
+fit.rf <- train(sp_sex~., data=dataset, method="rf", metric=metric, trControl=control)
+```
+
+```{r}
+
+# summarize accuracy of models
+results <- resamples(list(lda=fit.lda, 
+                          cart=fit.cart, 
+                          knn=fit.knn, 
+                          svm=fit.svm, 
+                          rf=fit.rf))
+summary(results)
+
+# compare accuracy of models
+dotplot(results)
+
+ggplot(results)+
+  geom_dotplot()+
+  facet_wrap(metrics ~.)
+```
+
+```{r}
+
+
+# estimate skill of LDA on the validation dataset
+predictions <- predict(fit.lda, validation)
+cm<-confusionMatrix(predictions, validation$sp_sex)
+
+fit.lda$finalModel
+fm<-fit.lda$finalModel
+fit.rf$results
+
+
+
+```
+
+
+```{r}
+x <- dataset %>% select(bill_depth_mm,bill_length_mm,flipper_length_mm,body_mass_g) %>% 
+  mutate(nms = row.names(.)) %>% 
+  column_to_rownames('nms')
+y <- dataset$sp
+trellis.par.set(theme = col.whitebg(), warn = FALSE)
+featurePlot(x, y, "ellipse")
+featurePlot(x, y, "strip", jitter = TRUE)
+featurePlot(x, y, "box")
+featurePlot(x, y, "pairs")
+featurePlot(x,y, "density")
+
+prc_pen <- prcomp(penguins[,3:6])
+
+plot(prc_pen$rotation[1]~prc_pen$rotation[3])
+```
+
+```{r}
+library(ggfortify)
+df<-dataset[3:5]
+pca_res <- prcomp(df, scale. = TRUE)
+
+df_pca <- prcomp(df)
+df_out <- as.data.frame(df_pca$x)
+
+df_out<-df_out %>% 
+  bind_cols(species = dataset$sp_sex)
+
+autoplot(pca_res)
+
+autoplot(pca_res, data = dataset, colour = 'sp_sex')
+ggplot(df_out)+
+  geom_point(aes(x=PC1, y=PC2, color=species))
+
+```
+
+```{r}
+
+scaled_pins<-penguins %>% 
+  group_by(species) %>% 
+  summarise(sc_mass = scale(body_mass_g, center = TRUE),
+            sc_b_len = scale(bill_length_mm, center = TRUE),
+            sc_b_dep = scale(bill_depth_mm, center = TRUE),
+            sc_f_len = scale(flipper_length_mm, center = TRUE)) %>% 
+  bind_cols(penguins %>% 
+              select(sex)) %>% 
+  ungroup() %>% 
+  pivot_longer(cols = sc_mass:sc_f_len, names_to = "stat", values_to = "value")
+  
+
+ggplot(scaled_pins, aes(y=species, x=value))+
+  geom_point(aes(color = sex))+
+  ggridges::stat_density_ridges(quantile_lines = TRUE, quantiles = 2, aes(fill = sex), alpha = 0.3, scale = 1)+
+  facet_wrap(stat ~.)
+
+floof<-penguins %>% 
+  filter(complete.cases(.)) %>% 
+  group_by(species, sex) %>% 
+  summarise(avg_mass = mean(body_mass_g),
+            sd_mass = sd(body_mass_g),
+            var_mass = map(body_mass_g, ~var(.x))) %>% 
+  ungroup() %>% 
+  left_join(penguins %>% filter(complete.cases(.)) %>% 
+              group_by(species) %>% 
+              summarise(spec_mass = mean(body_mass_g, na.rm = TRUE)), by= "species") %>% 
+  group_by(species) %>% 
+  summarise(sex = sex,
+            avg_mass = avg_mass,
+            sd_mass = sd_mass,
+            spec_mass = spec_mass,
+            sex_diff = max(avg_mass)-min(avg_mass),
+            spec_sd = sd(avg_mass))
+
+
+
+
+ggplot(floof)+
+  geom_point(aes(x=avg_mass, y= species,color = sex))+
+  geom_point(aes(x=spec_mass, y=species))+
+  geom_segment(aes(x=spec_mass - (sex_diff/2), xend = spec_mass + (sex_diff/2), y=species, yend=species))
+  
+  
+
+ggplot(penguins, aes(x=as.factor(year), y=body_mass_g, color=sex))+
+  geom_boxplot()+
+  facet_wrap(species ~.)
+```
+
